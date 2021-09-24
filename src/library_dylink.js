@@ -429,37 +429,58 @@ var LibraryDylink = {
     // loadModule loads the wasm module after all its dependencies have been loaded.
     // can be called both sync/async.
     function loadModule() {
-      // alignments are powers of 2
-      var memAlign = Math.pow(2, metadata.memoryAlign);
-      // finalize alignments and verify them
-      memAlign = Math.max(memAlign, STACK_ALIGN); // we at least need stack alignment
-      // prepare memory
-      var memoryBase = alignMemory(getMemory(metadata.memorySize + memAlign), memAlign); // TODO: add to cleanups
-#if DYLINK_DEBUG
-      err("loadModule: memoryBase=" + memoryBase);
-#endif
-      // TODO: use only __memory_base and __table_base, need to update asm.js backend
-      var tableBase = wasmTable.length;
-      wasmTable.grow(metadata.tableSize);
-      // zero-initialize memory and table
-      // The static area consists of explicitly initialized data, followed by zero-initialized data.
-      // The latter may need zeroing out if the MAIN_MODULE has already used this memory area before
-      // dlopen'ing the SIDE_MODULE.  Since we don't know the size of the explicitly initialized data
-      // here, we just zero the whole thing, which is suboptimal, but should at least resolve bugs
-      // from uninitialized memory.
+      var needsAllocation = !handle || !{{{ makeGetValue('handle', C_STRUCTS.dso.mem_allocated, 'i8') }}};
+      if (needsAllocation) {
+        // alignments are powers of 2
+        var memAlign = Math.pow(2, metadata.memoryAlign);
+        // finalize alignments and verify them
+        memAlign = Math.max(memAlign, STACK_ALIGN); // we at least need stack alignment
+        // prepare memory
+        var memoryBase = metadata.memorySize ? alignMemory(getMemory(metadata.memorySize + memAlign), memAlign) : 0; // TODO: add to cleanups
+        // TODO: use only __memory_base and __table_base, need to update asm.js backend
+        var tableBase = wasmTable.length;
+        // zero-initialize memory and table
+        // The static area consists of explicitly initialized data, followed by zero-initialized data.
+        // The latter may need zeroing out if the MAIN_MODULE has already used this memory area before
+        // dlopen'ing the SIDE_MODULE.  Since we don't know the size of the explicitly initialized data
+        // here, we just zero the whole thing, which is suboptimal, but should at least resolve bugs
+        // from uninitialized memory.
 #if USE_PTHREADS
-      // in a pthread the module heap was already allocated and initialized in the main thread.
-      if (!ENVIRONMENT_IS_PTHREAD) {
+        // in a pthread the module heap was already allocated and initialized in the main thread.
+        if (!ENVIRONMENT_IS_PTHREAD) {
 #endif
-        for (var i = memoryBase; i < memoryBase + metadata.memorySize; i++) {
-          HEAP8[i] = 0;
+          for (var i = memoryBase; i < memoryBase + metadata.memorySize; i++) {
+            HEAP8[i] = 0;
+          }
+#if USE_PTHREADS
         }
-#if USE_PTHREADS
-      }
 #endif
+        if (handle) {
+          {{{ makeSetValue('handle', C_STRUCTS.dso.mem_allocated, '1', 'i8') }}};
+          {{{ makeSetValue('handle', C_STRUCTS.dso.mem_addr, 'memoryBase', '*') }}};
+          {{{ makeSetValue('handle', C_STRUCTS.dso.mem_size, 'metadata.memorySize', 'i32') }}};
+          {{{ makeSetValue('handle', C_STRUCTS.dso.table_addr, 'tableBase', '*') }}};
+          {{{ makeSetValue('handle', C_STRUCTS.dso.table_size, 'metadata.tableSize', 'i32') }}};
+        }
+      } else {
+        memoryBase = {{{ makeGetValue('handle', C_STRUCTS.dso.mem_addr, '*') }}};
+        tableBase = {{{ makeGetValue('handle', C_STRUCTS.dso.table_addr, '*') }}};
+      }
+
+      var tableGrowthNeeded = tableBase + metadata.tableSize - wasmTable.length;
+      if (tableGrowthNeeded > 0) {
+#if DYLINK_DEBUG
+        err("loadModule: growing table: " + tableGrowthNeeded);
+#endif
+        wasmTable.grow(tableGrowthNeeded);
+      }
       for (var i = tableBase; i < tableBase + metadata.tableSize; i++) {
         wasmTable.set(i, null);
       }
+#if DYLINK_DEBUG
+      err("loadModule: memory[" + memoryBase + ":" + (memoryBase + metadata.memorySize) + "]" +
+                     " table[" + tableBase + ":" + (tableBase + metadata.tableSize) + "]");
+#endif
 
       // This is the export map that we ultimately return.  We declare it here
       // so it can be used within resolveSymbol.  We resolve symbols against
