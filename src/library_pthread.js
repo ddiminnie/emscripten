@@ -580,9 +580,9 @@ var LibraryPThread = {
     Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.detached }}} >> 2), threadParams.detached);
     Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.stack_size }}} >> 2), threadParams.stackSize);
     Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.stack }}} >> 2), stackHigh);
-    Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.attr }}} >> 2), threadParams.stackSize);
-    Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.attr }}} + 8 >> 2), stackHigh);
-    Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.attr }}} + 12 >> 2), threadParams.detached);
+    Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.attr }}} + 0/*_a_stacksize*/ >> 2), threadParams.stackSize);
+    Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.attr }}} + 8/*_a_stackaddr*/ >> 2), stackHigh);
+    Atomics.store(HEAPU32, tis + ({{{ C_STRUCTS.pthread.attr }}} + 12/*_a_detach*/ >> 2), threadParams.detached);
 
 #if PTHREADS_PROFILING
     PThread.createProfilerBlock(pthread.threadInfoStruct);
@@ -666,7 +666,7 @@ var LibraryPThread = {
     // Deduce which WebGL canvases (HTMLCanvasElements or OffscreenCanvases) should be passed over to the
     // Worker that hosts the spawned pthread.
     // Comma-delimited list of CSS selectors that must identify canvases by IDs: "#canvas1, #canvas2, ..."
-    var transferredCanvasNames = attr ? {{{ makeGetValue('attr', 40, POINTER_TYPE) }}} : 0;
+    var transferredCanvasNames = attr ? {{{ makeGetValue('attr', C_STRUCTS.pthread_attr_t._a_transferredcanvases, POINTER_TYPE) }}} : 0;
 #if OFFSCREENCANVASES_TO_PTHREAD
     // Proxied canvases string pointer -1 is used as a special token to fetch
     // whatever canvases were passed to build in -s
@@ -777,7 +777,7 @@ var LibraryPThread = {
     // When musl creates C11 threads it passes __ATTRP_C11_THREAD (-1) which
     // treat as if it was NULL.
     if (attr && attr != {{{ cDefine('__ATTRP_C11_THREAD') }}}) {
-      stackSize = {{{ makeGetValue('attr', 0, 'i32') }}};
+      stackSize = {{{ makeGetValue('attr', 0/*_a_stacksize*/, 'i32') }}};
       // Musl has a convention that the stack size that is stored to the pthread
       // attribute structure is always musl's #define DEFAULT_STACK_SIZE
       // smaller than the actual created stack size. That is, stored stack size
@@ -787,7 +787,7 @@ var LibraryPThread = {
       // the pthread API. When reading the structure directly on JS side
       // however, we need to offset the size manually here.
       stackSize += {{{ cDefine('DEFAULT_STACK_SIZE') }}};
-      stackBase = {{{ makeGetValue('attr', 8, 'i32') }}};
+      stackBase = {{{ makeGetValue('attr', 8/*_a_stackaddr*/, 'i32') }}};
       detached = {{{ makeGetValue('attr', 12/*_a_detach*/, 'i32') }}} !== 0/*PTHREAD_CREATE_JOINABLE*/;
     } else {
       // According to
@@ -878,6 +878,16 @@ var LibraryPThread = {
       err('pthread_join attempted on a null thread pointer!');
       return {{{ cDefine('ESRCH') }}};
     }
+    var self = {{{ makeGetValue('thread', C_STRUCTS.pthread.self, 'i32') }}};
+    if (self !== thread) {
+      err('pthread_join attempted on thread ' + thread + ', which does not point to a valid thread, or does not exist anymore!');
+      return {{{ cDefine('ESRCH') }}};
+    }
+    var detached = Atomics.load(HEAPU32, (thread + {{{ C_STRUCTS.pthread.detached }}} ) >> 2);
+    if (detached) {
+      err('Attempted to join thread ' + thread + ', which was already detached!');
+      return {{{ cDefine('EINVAL') }}}; // The thread is already detached, can no longer join it!
+    }
     if (ENVIRONMENT_IS_PTHREAD && _pthread_self() == thread) {
       err('PThread ' + thread + ' is attempting to join to itself!');
       return {{{ cDefine('EDEADLK') }}};
@@ -885,17 +895,6 @@ var LibraryPThread = {
     else if (!ENVIRONMENT_IS_PTHREAD && _emscripten_main_browser_thread_id() == thread) {
       err('Main thread ' + thread + ' is attempting to join to itself!');
       return {{{ cDefine('EDEADLK') }}};
-    }
-    var self = {{{ makeGetValue('thread', C_STRUCTS.pthread.self, 'i32') }}};
-    if (self !== thread) {
-      err('pthread_join attempted on thread ' + thread + ', which does not point to a valid thread, or does not exist anymore!');
-      return {{{ cDefine('ESRCH') }}};
-    }
-
-    var detached = Atomics.load(HEAPU32, (thread + {{{ C_STRUCTS.pthread.detached }}} ) >> 2);
-    if (detached) {
-      err('Attempted to join thread ' + thread + ', which was already detached!');
-      return {{{ cDefine('EINVAL') }}}; // The thread is already detached, can no longer join it!
     }
 
 #if ASSERTIONS || IN_TEST_HARNESS || !MINIMAL_RUNTIME || !ALLOW_BLOCKING_ON_MAIN_THREAD

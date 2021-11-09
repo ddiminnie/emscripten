@@ -116,7 +116,7 @@ def parse_wasm(filename):
   return imports, exports, funcs
 
 
-def with_wasmfs(f):
+def also_with_wasmfs(f):
   def metafunc(self, wasmfs):
     if wasmfs:
       self.set_setting('WASMFS')
@@ -7090,22 +7090,6 @@ int main() {
     # adding --metrics should not affect code size
     self.assertEqual(base_size, os.path.getsize('a.out.wasm'))
 
-  def assertFileContents(self, filename, contents):
-    contents = contents.replace('\r', '')
-
-    if common.EMTEST_REBASELINE:
-      with open(filename, 'w') as f:
-        f.write(contents)
-      return
-
-    if not os.path.exists(filename):
-      self.fail('Test expectation file not found: ' + filename + '.\n' +
-                'Run with EMTEST_REBASELINE to generate.')
-    expected_content = read_file(filename)
-    message = "Run with EMTEST_REBASELINE=1 to automatically update expectations"
-    self.assertTextDataIdentical(expected_content, contents, message,
-                                 filename, filename + '.new')
-
   def run_metadce_test(self, filename, args, expected_exists, expected_not_exists, check_size=True,
                        check_sent=True, check_imports=True, check_exports=True, check_funcs=True):
     size_slack = 0.05
@@ -11159,33 +11143,37 @@ void foo() {}
 
   # WASMFS tests
 
-  @with_wasmfs
+  @also_with_wasmfs
   def test_unistd_dup(self):
     self.set_setting('WASMFS')
     self.do_run_in_out_file_test('wasmfs/wasmfs_dup.c')
 
-  @with_wasmfs
+  @also_with_wasmfs
   def test_unistd_open(self):
     self.set_setting('WASMFS')
     self.do_run_in_out_file_test('wasmfs/wasmfs_open.c')
 
-  @with_wasmfs
+  @also_with_wasmfs
   def test_unistd_fstat(self):
     self.set_setting('WASMFS')
     self.do_run_in_out_file_test('wasmfs/wasmfs_fstat.c')
 
-  @with_wasmfs
+  @also_with_wasmfs
   def test_unistd_create(self):
     self.set_setting('WASMFS')
     self.do_run_in_out_file_test('wasmfs/wasmfs_create.c')
 
-  @with_wasmfs
+  @also_with_wasmfs
   def test_unistd_seek(self):
     self.do_run_in_out_file_test('wasmfs/wasmfs_seek.c')
 
-  @with_wasmfs
+  @also_with_wasmfs
   def test_unistd_mkdir(self):
     self.do_run_in_out_file_test('wasmfs/wasmfs_mkdir.c')
+
+  @also_with_wasmfs
+  def test_unistd_cwd(self):
+    self.do_run_in_out_file_test('wasmfs/wasmfs_chdir.c')
 
   @disabled('Running with initial >2GB heaps is not currently supported on the CI version of Node')
   def test_hello_world_above_2gb(self):
